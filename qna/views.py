@@ -1,11 +1,12 @@
 from userprofile.models import UserProfile
 from django.http import JsonResponse
-from django.db.models import Count
+from django.db.models import Count, F
+from django.db import transaction as db_transaction
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 import json
 from django.views import View
-from .models import Question, Tags
+from .models import Question, Answer, Vote, Tags
 from utils.decorators import login_required_json, admin_required_json
 
 
@@ -255,6 +256,100 @@ class TagDetailView(View):
             return JsonResponse({'error': 'Invalid JSON format.'}, status=400)
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AnswerVoteView(View):
+    @method_decorator(login_required_json)
+    def post(self, request, pk):
+        try:
+            answer = Answer.objects.select_related('created_by', 'question').get(pk=pk)
+        except Answer.DoesNotExist:
+            return JsonResponse({'error': 'Answer not found.'}, status=404)
+
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON format.'}, status=400)
+
+        vote_type = body.get('vote')
+        if vote_type not in ('up', 'down'):
+            return JsonResponse({'error': 'Vote must be either "up" or "down".'}, status=400)
+
+        voter_profile, _ = UserProfile.objects.get_or_create(user=request.user)
+
+        with db_transaction.atomic():
+            vote, created = Vote.objects.get_or_create(
+                answer=answer,
+                created_by=voter_profile,
+                defaults={'question': answer.question, 'vote': vote_type}
+            )
+
+            if not created:
+                if vote.vote == vote_type:
+                    return JsonResponse({'error': 'You have already voted this way on this answer.'}, status=400)
+                
+                # Changing vote direction
+                vote.vote = vote_type
+                vote.save()
+
+                if vote_type == 'up':
+                    answer.upvote_count = F('upvote_count') + 1
+                    answer.downvote_count = F('downvote_count') - 1
+                    rep_change = +20
+                else:
+                    answer.upvote_count = F('upvote_count') - 1
+                    answer.downvote_count = F('downvote_count') + 1
+                    rep_change = -20
+            else:
+                if vote_type == 'up':
+                    answer.upvote_count = F('upvote_count') + 1
+                    rep_change = +10
+                else:
+                    answer.downvote_count = F('downvote_count') + 1
+                    rep_change = -10
+
+            answer.save()
+            UserProfile.objects.filter(id=answer.created_by_id).update(reputation=F('reputation') + rep_change)
+
+        answer.refresh_from_db()
+        return JsonResponse({
+            'message': 'Vote recorded successfully!',
+            'upvote_count': answer.upvote_count,
+            'downvote_count': answer.downvote_count
+        }, status=200)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AcceptAnswerView(View):
+    @method_decorator(login_required_json)
+    def post(self, request, pk):
+        try:
+            answer = Answer.objects.select_related('question__created_by__user', 'created_by').get(pk=pk)
+        except Answer.DoesNotExist:
+            return JsonResponse({'error': 'Answer not found.'}, status=404)
+
+        question = answer.question
+        if question.created_by.user != request.user:
+            return JsonResponse({'error': 'Only the question author can accept an answer.'}, status=403)
+
+        with db_transaction.atomic():
+            previous_accepted_id = question.accepted_answer_id
+
+            if previous_accepted_id == answer.id:
+                return JsonResponse({'message': 'Answer is already accepted.'}, status=200)
+
+            if previous_accepted_id:
+                prev_answer = Answer.objects.select_related('created_by').get(pk=previous_accepted_id)
+                UserProfile.objects.filter(id=prev_answer.created_by_id).update(reputation=F('reputation') - 15)
+
+            question.accepted_answer = answer
+            question.save()
+
+            UserProfile.objects.filter(id=answer.created_by_id).update(reputation=F('reputation') + 15)
+
+        return JsonResponse({'message': 'Answer accepted successfully!'}, status=200)
+
 
 
         
