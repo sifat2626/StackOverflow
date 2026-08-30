@@ -10,6 +10,7 @@ class Question(models.Model):
     description = models.TextField()
     tags = models.ManyToManyField('Tags', related_name='questions')
     accepted_answer = models.ForeignKey('Answer', on_delete=models.SET_NULL, null=True, blank=True, related_name='accepted_questions')
+    is_closed = models.BooleanField(default=False)
     created_by = models.ForeignKey(UserProfile, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -24,6 +24,9 @@ def serialize_question_summary(question):
     }
 
 
+from .forms import QuestionForm, AnswerForm, CommentForm, TagForm
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class QuestionListView(View):
     def get(self, request):
@@ -37,13 +40,14 @@ class QuestionListView(View):
     @method_decorator(login_required_json)
     def post(self, request):
         try:
-            body = json.loads(request.body)
-            title = body.get('title')
-            description = body.get('description')
+            body = json.loads(request.body) if request.body else {}
+            form = QuestionForm(body)
+            if not form.is_valid():
+                return JsonResponse({'error': form.errors}, status=400)
+
+            title = form.cleaned_data['title']
+            description = form.cleaned_data['description']
             tags = body.get('tags', [])
-            
-            if not title or not description:
-                return JsonResponse({'error': 'Title and description are required.'}, status=400)
 
             user_profile, _ = UserProfile.objects.get_or_create(user=request.user)
 
@@ -186,11 +190,12 @@ class TagListView(View):
     @method_decorator(admin_required_json)
     def post(self, request):
         try:
-            body = json.loads(request.body)
-            name = body.get('name')
-            if not name or not isinstance(name, str) or not name.strip():
-                return JsonResponse({'error': 'Name is required.'}, status=400)
-            tag_name = name.strip().lower()
+            body = json.loads(request.body) if request.body else {}
+            form = TagForm(body)
+            if not form.is_valid():
+                return JsonResponse({'error': form.errors}, status=400)
+
+            tag_name = form.cleaned_data['name']
             if Tags.objects.filter(name=tag_name).exists():
                 return JsonResponse({'error': 'Tag with this name already exists.'}, status=400)
             tag = Tags.objects.create(name=tag_name)
@@ -365,14 +370,18 @@ class QuestionAnswerListView(View):
         except json.JSONDecodeError:
             return JsonResponse({'error': 'Invalid JSON format.'}, status=400)
 
-        answer_text = body.get('answer') or body.get('body')
-        if not answer_text or not isinstance(answer_text, str) or not answer_text.strip():
-            return JsonResponse({'error': 'Answer content is required.'}, status=400)
+        # Support 'body' or 'answer' key for form data mapping
+        form_data = {'answer': body.get('answer') or body.get('body')}
+        form = AnswerForm(form_data)
+        if not form.is_valid():
+            return JsonResponse({'error': form.errors}, status=400)
+
+        answer_text = form.cleaned_data['answer']
 
         user_profile, _ = UserProfile.objects.get_or_create(user=request.user)
         answer = Answer.objects.create(
             question=question,
-            answer=answer_text.strip(),
+            answer=answer_text,
             created_by=user_profile
         )
 
@@ -421,14 +430,17 @@ class QuestionCommentListView(View):
         except json.JSONDecodeError:
             return JsonResponse({'error': 'Invalid JSON format.'}, status=400)
 
-        comment_text = body.get('comment') or body.get('body')
-        if not comment_text or not isinstance(comment_text, str) or not comment_text.strip():
-            return JsonResponse({'error': 'Comment content is required.'}, status=400)
+        form_data = {'comment': body.get('comment') or body.get('body')}
+        form = CommentForm(form_data)
+        if not form.is_valid():
+            return JsonResponse({'error': form.errors}, status=400)
+
+        comment_text = form.cleaned_data['comment']
 
         user_profile, _ = UserProfile.objects.get_or_create(user=request.user)
         comment = Comment.objects.create(
             question=question,
-            comment=comment_text.strip(),
+            comment=comment_text,
             created_by=user_profile
         )
 
