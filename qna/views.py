@@ -6,7 +6,7 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 import json
 from django.views import View
-from .models import Question, Answer, Vote, Tags
+from .models import Question, Answer, Vote, Tags, Comment
 from utils.decorators import login_required_json, admin_required_json
 
 
@@ -169,7 +169,7 @@ class QuestionDetailView(View):
         if not question:
             return JsonResponse({'error': 'Question not found.'}, status=404)
 
-        if question.created_by.user != request.user:
+        if question.created_by.user != request.user and not (request.user.is_staff or request.user.is_superuser):
             return JsonResponse({'error': 'Permission denied.'}, status=403)
 
         question.delete()
@@ -349,6 +349,119 @@ class AcceptAnswerView(View):
             UserProfile.objects.filter(id=answer.created_by_id).update(reputation=F('reputation') + 15)
 
         return JsonResponse({'message': 'Answer accepted successfully!'}, status=200)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class QuestionAnswerListView(View):
+    @method_decorator(login_required_json)
+    def post(self, request, pk):
+        try:
+            question = Question.objects.get(pk=pk)
+        except Question.DoesNotExist:
+            return JsonResponse({'error': 'Question not found.'}, status=404)
+
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON format.'}, status=400)
+
+        answer_text = body.get('answer') or body.get('body')
+        if not answer_text or not isinstance(answer_text, str) or not answer_text.strip():
+            return JsonResponse({'error': 'Answer content is required.'}, status=400)
+
+        user_profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        answer = Answer.objects.create(
+            question=question,
+            answer=answer_text.strip(),
+            created_by=user_profile
+        )
+
+        return JsonResponse({
+            'message': 'Answer posted successfully!',
+            'answer': {
+                'id': str(answer.id),
+                'question_id': str(question.id),
+                'answer': answer.answer,
+                'created_by': request.user.username,
+                'created_at': answer.created_at.isoformat()
+            }
+        }, status=201)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AnswerDetailView(View):
+    @method_decorator(login_required_json)
+    def delete(self, request, pk):
+        try:
+            answer = Answer.objects.select_related('created_by__user').get(pk=pk)
+        except Answer.DoesNotExist:
+            return JsonResponse({'error': 'Answer not found.'}, status=404)
+
+        is_author = answer.created_by.user == request.user
+        is_staff = request.user.is_staff or request.user.is_superuser
+
+        if not (is_author or is_staff):
+            return JsonResponse({'error': 'Permission denied. Only author or staff can delete.'}, status=403)
+
+        answer.delete()
+        return JsonResponse({'message': 'Answer deleted successfully!'}, status=200)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class QuestionCommentListView(View):
+    @method_decorator(login_required_json)
+    def post(self, request, pk):
+        try:
+            question = Question.objects.get(pk=pk)
+        except Question.DoesNotExist:
+            return JsonResponse({'error': 'Question not found.'}, status=404)
+
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON format.'}, status=400)
+
+        comment_text = body.get('comment') or body.get('body')
+        if not comment_text or not isinstance(comment_text, str) or not comment_text.strip():
+            return JsonResponse({'error': 'Comment content is required.'}, status=400)
+
+        user_profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        comment = Comment.objects.create(
+            question=question,
+            comment=comment_text.strip(),
+            created_by=user_profile
+        )
+
+        return JsonResponse({
+            'message': 'Comment posted successfully!',
+            'comment': {
+                'id': str(comment.id),
+                'question_id': str(question.id),
+                'comment': comment.comment,
+                'created_by': request.user.username,
+                'created_at': comment.created_at.isoformat()
+            }
+        }, status=201)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class CommentDetailView(View):
+    @method_decorator(login_required_json)
+    def delete(self, request, pk):
+        try:
+            comment = Comment.objects.select_related('created_by__user').get(pk=pk)
+        except Comment.DoesNotExist:
+            return JsonResponse({'error': 'Comment not found.'}, status=404)
+
+        is_author = comment.created_by.user == request.user
+        is_staff = request.user.is_staff or request.user.is_superuser
+
+        if not (is_author or is_staff):
+            return JsonResponse({'error': 'Permission denied. Only author or staff can delete.'}, status=403)
+
+        comment.delete()
+        return JsonResponse({'message': 'Comment deleted successfully!'}, status=200)
+
 
 
 

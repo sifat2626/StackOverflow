@@ -247,5 +247,78 @@ class AcceptAnswerTestCase(TestCase):
         self.assertEqual(self.ans_profile1.reputation, 0)
 
 
+class AuthEndpointsTestCase(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='testuser', password='password123')
+
+    def test_login_logout_whoami_flow(self):
+        # WhoAmI unauthenticated
+        res = self.client.get(reverse('whoami'))
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.json()['is_authenticated'])
+
+        # Login failure
+        res = self.client.post(reverse('login'), data={'username': 'testuser', 'password': 'wrongpassword'}, content_type='application/json')
+        self.assertEqual(res.status_code, 401)
+
+        # Login success
+        res = self.client.post(reverse('login'), data={'username': 'testuser', 'password': 'password123'}, content_type='application/json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['user']['username'], 'testuser')
+
+        # WhoAmI authenticated
+        res = self.client.get(reverse('whoami'))
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()['is_authenticated'])
+        self.assertEqual(res.json()['user']['username'], 'testuser')
+
+        # Logout
+        res = self.client.post(reverse('logout'))
+        self.assertEqual(res.status_code, 200)
+
+        # WhoAmI after logout
+        res = self.client.get(reverse('whoami'))
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.json()['is_authenticated'])
+
+
+class DeletionPermissionsTestCase(TestCase):
+    def setUp(self):
+        from userprofile.models import UserProfile
+        from qna.models import Question, Answer, Comment
+
+        self.author = User.objects.create_user(username='author', password='password123')
+        self.author_profile = UserProfile.objects.create(user=self.author)
+
+        self.other_user = User.objects.create_user(username='other', password='password123')
+        self.staff_user = User.objects.create_superuser(username='staff', password='password123')
+
+        self.question = Question.objects.create(title='Q', description='D', created_by=self.author_profile)
+        self.answer = Answer.objects.create(question=self.question, answer='A', created_by=self.author_profile)
+        self.comment = Comment.objects.create(question=self.question, comment='C', created_by=self.author_profile)
+
+    def test_other_user_cannot_delete_answer_or_comment(self):
+        self.client.login(username='other', password='password123')
+        res1 = self.client.delete(reverse('answer-detail', kwargs={'pk': self.answer.id}))
+        self.assertEqual(res1.status_code, 403)
+        
+        res2 = self.client.delete(reverse('comment-detail', kwargs={'pk': self.comment.id}))
+        self.assertEqual(res2.status_code, 403)
+
+    def test_author_can_delete_answer_and_comment(self):
+        self.client.login(username='author', password='password123')
+        res1 = self.client.delete(reverse('answer-detail', kwargs={'pk': self.answer.id}))
+        self.assertEqual(res1.status_code, 200)
+        
+        res2 = self.client.delete(reverse('comment-detail', kwargs={'pk': self.comment.id}))
+        self.assertEqual(res2.status_code, 200)
+
+    def test_staff_can_delete_answer_and_comment(self):
+        self.client.login(username='staff', password='password123')
+        res1 = self.client.delete(reverse('answer-detail', kwargs={'pk': self.answer.id}))
+        self.assertEqual(res1.status_code, 200)
+
+
+
 
 
