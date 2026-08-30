@@ -82,3 +82,44 @@ class TagPermissionsTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
 
 
+class QuestionListViewTestCase(TestCase):
+    def setUp(self):
+        from userprofile.models import UserProfile
+        from qna.models import Question, Answer
+        self.user_obj = User.objects.create_user(username='author1', password='password123')
+        self.profile = UserProfile.objects.create(user=self.user_obj)
+        self.tag1 = Tags.objects.create(name='python')
+        self.tag2 = Tags.objects.create(name='django')
+
+        # Create multiple questions with tags and answers to test N+1 query performance
+        for i in range(5):
+            q = Question.objects.create(
+                title=f'Question {i}',
+                description=f'Description {i}',
+                created_by=self.profile
+            )
+            q.tags.add(self.tag1, self.tag2)
+            Answer.objects.create(question=q, answer=f'Answer {i}', created_by=self.profile)
+
+    def test_get_questions_list_query_count_and_data(self):
+        from django.db import connection
+        from django.test import utils
+
+        with self.assertNumQueries(2):
+            response = self.client.get(reverse('question-list'))
+        
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn('questions', data)
+        questions = data['questions']
+        self.assertEqual(len(questions), 5)
+        
+        # Verify fields on serialized output
+        first_q = questions[0]
+        self.assertIn('title', first_q)
+        self.assertEqual(first_q['created_by'], 'author1')
+        self.assertCountEqual(first_q['tags'], ['python', 'django'])
+        self.assertEqual(first_q['answers_count'], 1)
+
+
+

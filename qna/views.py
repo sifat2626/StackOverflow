@@ -10,12 +10,15 @@ from utils.decorators import login_required_json, admin_required_json
 
 
 def serialize_question_summary(question):
+    answers_count = getattr(question, 'answers_count', None)
+    if answers_count is None:
+        answers_count = question.answer_set.count()
     return {
         'id': str(question.id),
         'title': question.title,
         'created_by': question.created_by.user.username,
         'tags': [tag.name for tag in question.tags.all()],
-        'answers_count': getattr(question, 'answers_count', question.answers.count()),
+        'answers_count': answers_count,
         'created_at': question.created_at.isoformat(),
     }
 
@@ -25,7 +28,7 @@ class QuestionListView(View):
     def get(self, request):
         questions = Question.objects.select_related('created_by__user') \
                                    .prefetch_related('tags') \
-                                   .annotate(answers_count=Count('answers')) \
+                                   .annotate(answers_count=Count('answer')) \
                                    .order_by('-created_at')
         data = [serialize_question_summary(q) for q in questions]
         return JsonResponse({'questions': data}, status=200)
@@ -75,7 +78,7 @@ class QuestionListView(View):
 class QuestionDetailView(View):
     def get_object(self, pk):
         try:
-            return Question.objects.select_related('created_by__user').prefetch_related('tags', 'answers__created_by__user').get(pk=pk)
+            return Question.objects.select_related('created_by__user').prefetch_related('tags', 'answer_set__created_by__user').get(pk=pk)
         except Question.DoesNotExist:
             return None
 
@@ -98,7 +101,7 @@ class QuestionDetailView(View):
                     'created_by': answer.created_by.user.username,
                     'created_at': answer.created_at.isoformat()
                 }
-                for answer in question.answers.all()
+                for answer in question.answer_set.all()
             ]
         }
         return JsonResponse({'question': data}, status=200)
